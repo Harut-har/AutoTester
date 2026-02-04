@@ -91,7 +91,17 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
 
   await context.exposeBinding("__autotesterEvent", (_source, payload: unknown) => {
     if (!isRecordedEventPayload(payload)) {
-      if (debug) console.log("[recorder] ignored invalid recorder payload");
+      if (debug) {
+        const raw =
+          payload === undefined
+            ? "undefined"
+            : payload === null
+              ? "null"
+              : typeof payload === "string"
+                ? payload
+                : JSON.stringify(payload);
+        console.log(`[recorder] ignored invalid recorder payload ${raw.slice(0, 300)}`);
+      }
       return;
     }
     if (debug) console.log(`[recorder] event=${payload.type} locators=${payload.locators.length}`);
@@ -201,9 +211,16 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
 
     function emit(payload: BrowserRecorderPayload) {
       const publish = (window as { __autotesterEvent?: (event: BrowserRecorderPayload) => void }).__autotesterEvent;
-      if (typeof publish === "function") {
-        publish(payload);
+      if (typeof publish !== "function") {
+        if (debug) {
+          console.log("[autotester] publish missing", typeof publish);
+        }
+        return;
       }
+      if (debug) {
+        console.log("[autotester] emit", payload.type, payload.locators.length);
+      }
+      publish(payload);
     }
 
     function send(type: string, target: Element, value?: string | null) {
@@ -238,6 +255,9 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
         const target = resolveElement(e.target);
         if (!target) return;
         const normalized = normalizeTarget(target);
+        if (debug) {
+          console.log("[autotester] click", normalized.tagName, normalized.id || "", normalized.className || "");
+        }
         lastNormalizedClick = normalized;
         send("click", normalized);
       },
@@ -287,6 +307,9 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
           const isSecret =
             target.type === "password" || target.getAttribute("autocomplete") === "current-password";
           const value = isSecret ? "__SECRET__" : target.value;
+          if (debug) {
+            console.log("[autotester] input", target.tagName, target.type || "", value?.length ?? 0);
+          }
           scheduleInput(target, value);
         }
       },
@@ -312,9 +335,16 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
         const target = resolveElement(e.target);
         if (!target) return;
         if (target instanceof HTMLSelectElement) {
+          if (debug) {
+            console.log("[autotester] change", target.tagName, target.value);
+          }
           send("change", target, target.value);
         } else if (target instanceof HTMLInputElement && (target.type === "checkbox" || target.type === "radio")) {
-          send("change", target, target.checked ? "checked" : "unchecked");
+          const value = target.checked ? "checked" : "unchecked";
+          if (debug) {
+            console.log("[autotester] change", target.tagName, value);
+          }
+          send("change", target, value);
         }
       },
       true
@@ -347,6 +377,7 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       (e) => {
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
           e.preventDefault();
+          if (debug) console.log("[autotester] hotkey", e.key);
           flushAllInputs();
           const stop = (window as { __autotesterStop?: () => void }).__autotesterStop;
           if (typeof stop === "function") stop();
@@ -354,24 +385,28 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
           e.preventDefault();
+          if (debug) console.log("[autotester] hotkey", e.key);
           const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
           if (target) send("waitFor", normalizeTarget(target));
         }
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
           e.preventDefault();
+          if (debug) console.log("[autotester] hotkey", e.key);
           const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
           if (target) send("assert", normalizeTarget(target));
         }
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "u") {
           e.preventDefault();
+          if (debug) console.log("[autotester] hotkey", e.key);
           const pathname = location.pathname || "/";
           emit({ type: "assert", locators: [], value: `url:${pathname}` });
         }
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
           e.preventDefault();
+          if (debug) console.log("[autotester] hotkey", e.key);
           const text = window.prompt("Text contains:");
           if (text && text.trim().length > 0) {
             const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
