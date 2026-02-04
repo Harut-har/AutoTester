@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "autotester",
   "version": "0.1.0",
   "private": true,
@@ -26,5 +26,18 @@
     "@types/node": "^22.13.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
-  }
+  },
+  "description": "UI macro recorder/runner для автотестов: record → store in DB → replay → report.",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Harut-har/AutoTester.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Harut-har/AutoTester/issues"
+  },
+  "homepage": "https://github.com/Harut-har/AutoTester#readme"
 }
