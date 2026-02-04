@@ -59,11 +59,11 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  await page.exposeBinding("__autotesterEvent", (_source, payload: RecordedEvent) => {
+  await context.exposeBinding("__autotesterEvent", (_source, payload: RecordedEvent) => {
     pushEvent(payload);
   });
 
-  await page.exposeBinding("__autotesterStop", async () => {
+  await context.exposeBinding("__autotesterStop", async () => {
     stopRequested = true;
     await context.close();
     await browser.close();
@@ -152,9 +152,24 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       return locators;
     }
 
+    function emit(payload: { type: string; locators: unknown[]; value?: string | null }) {
+      const publish = (window as { __autotesterEvent?: (event: { type: string; locators: unknown[]; value?: string | null }) => void })
+        .__autotesterEvent;
+      if (typeof publish === "function") {
+        publish(payload);
+      }
+    }
+
     function send(type: string, target: Element, value?: string | null) {
       const locators = buildLocators(target);
-      (window as any).__autotesterEvent({ type, locators, value });
+      emit({ type, locators, value });
+    }
+
+    function resolveElement(target: EventTarget | null): Element | null {
+      if (!target) return null;
+      if (target instanceof Element) return target;
+      if (target instanceof Node) return target.parentElement;
+      return null;
     }
 
     function normalizeTarget(target: Element): Element {
@@ -171,21 +186,25 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       if (el) lastPointerElement = el;
     });
 
-    document.addEventListener("click", (e) => {
-      const target = e.target as Element | null;
-      if (!target) return;
-      const normalized = normalizeTarget(target);
-      lastNormalizedClick = normalized;
-      send("click", normalized);
-    });
+    document.addEventListener(
+      "click",
+      (e) => {
+        const target = resolveElement(e.target);
+        if (!target) return;
+        const normalized = normalizeTarget(target);
+        lastNormalizedClick = normalized;
+        send("click", normalized);
+      },
+      true
+    );
 
-    const inputBuffer = new Map<string, { value: string; locators: any[]; timer: number | null }>();
+    const inputBuffer = new Map<string, { value: string; locators: unknown[]; timer: number | null }>();
 
-    function keyFromLocators(locators: any[]): string {
+    function keyFromLocators(locators: unknown[]): string {
       if (!locators || locators.length === 0) return "";
-      const data = locators.find((l) => l.type === "data");
+      const data = locators.find((l) => typeof l === "object" && l !== null && "type" in l && (l as { type?: string }).type === "data");
       if (data) return JSON.stringify(data);
-      const css = locators.find((l) => l.type === "css");
+      const css = locators.find((l) => typeof l === "object" && l !== null && "type" in l && (l as { type?: string }).type === "css");
       if (css) return JSON.stringify(css);
       return JSON.stringify(locators[0]);
     }
@@ -195,7 +214,13 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       if (!entry) return;
       if (entry.timer) window.clearTimeout(entry.timer);
       inputBuffer.delete(key);
-      (window as any).__autotesterEvent({ type: "input", locators: entry.locators, value: entry.value });
+      emit({ type: "input", locators: entry.locators, value: entry.value });
+    }
+
+    function flushAllInputs() {
+      for (const key of inputBuffer.keys()) {
+        flushInput(key);
+      }
     }
 
     function scheduleInput(target: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -203,26 +228,31 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       const key = keyFromLocators(locators);
       const existing = inputBuffer.get(key);
       if (existing && existing.timer) window.clearTimeout(existing.timer);
-      const timer = window.setTimeout(() => flushInput(key), 400);
+      const timer = window.setTimeout(() => flushInput(key), 250);
       inputBuffer.set(key, { value, locators, timer });
     }
 
-    document.addEventListener("input", (e) => {
-      const target = e.target as HTMLInputElement | HTMLTextAreaElement | null;
-      if (!target) return;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        const isSecret =
-          target.type === "password" || target.getAttribute("autocomplete") === "current-password";
-        const value = isSecret ? "__SECRET__" : target.value;
-        scheduleInput(target, value);
-      }
-    });
+    document.addEventListener(
+      "input",
+      (e) => {
+        const target = resolveElement(e.target);
+        if (!target) return;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+          const isSecret =
+            target.type === "password" || target.getAttribute("autocomplete") === "current-password";
+          const value = isSecret ? "__SECRET__" : target.value;
+          scheduleInput(target, value);
+        }
+      },
+      true
+    );
 
     document.addEventListener(
       "blur",
       (e) => {
-        const target = e.target as HTMLInputElement | HTMLTextAreaElement | null;
+        const target = resolveElement(e.target);
         if (!target) return;
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
         const locators = buildLocators(target);
         const key = keyFromLocators(locators);
         flushInput(key);
@@ -230,21 +260,26 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       true
     );
 
-    document.addEventListener("change", (e) => {
-      const target = e.target as HTMLSelectElement | HTMLInputElement | null;
-      if (!target) return;
-      if (target instanceof HTMLSelectElement) {
-        send("change", target, target.value);
-      } else if (target instanceof HTMLInputElement && (target.type === "checkbox" || target.type === "radio")) {
-        send("change", target, target.checked ? "checked" : "unchecked");
-      }
-    });
+    document.addEventListener(
+      "change",
+      (e) => {
+        const target = resolveElement(e.target);
+        if (!target) return;
+        if (target instanceof HTMLSelectElement) {
+          send("change", target, target.value);
+        } else if (target instanceof HTMLInputElement && (target.type === "checkbox" || target.type === "radio")) {
+          send("change", target, target.checked ? "checked" : "unchecked");
+        }
+      },
+      true
+    );
 
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
     function emitNavigation() {
-      (window as any).__autotesterEvent({ type: "navigation", locators: [], value: location.href });
+      flushAllInputs();
+      emit({ type: "navigation", locators: [], value: location.href });
     }
 
     history.pushState = function (...args) {
@@ -261,47 +296,49 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     window.addEventListener("popstate", emitNavigation);
     window.addEventListener("hashchange", emitNavigation);
 
-    document.addEventListener("keydown", (e) => {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        (window as any).__autotesterStop();
-      }
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
+          e.preventDefault();
+          flushAllInputs();
+          const stop = (window as { __autotesterStop?: () => void }).__autotesterStop;
+          if (typeof stop === "function") stop();
+        }
 
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
-        e.preventDefault();
-        const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
-        if (target) send("waitFor", normalizeTarget(target));
-      }
-
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
-        e.preventDefault();
-        const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
-        if (target) send("assert", normalizeTarget(target));
-      }
-
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "u") {
-        e.preventDefault();
-        const pathname = location.pathname || "/";
-        (window as any).__autotesterEvent({ type: "assert", locators: [], value: `url:${pathname}` });
-      }
-
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
-        e.preventDefault();
-        const text = window.prompt("Text contains:");
-        if (text && text.trim().length > 0) {
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
+          e.preventDefault();
           const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
-          if (target) {
-            const normalized = normalizeTarget(target);
-            const locators = buildLocators(normalized);
-            (window as any).__autotesterEvent({
-              type: "assert",
-              locators,
-              value: `text:${text.trim()}`,
-            });
+          if (target) send("waitFor", normalizeTarget(target));
+        }
+
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
+          e.preventDefault();
+          const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
+          if (target) send("assert", normalizeTarget(target));
+        }
+
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "u") {
+          e.preventDefault();
+          const pathname = location.pathname || "/";
+          emit({ type: "assert", locators: [], value: `url:${pathname}` });
+        }
+
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          const text = window.prompt("Text contains:");
+          if (text && text.trim().length > 0) {
+            const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
+            if (target) {
+              const normalized = normalizeTarget(target);
+              const locators = buildLocators(normalized);
+              emit({ type: "assert", locators, value: `text:${text.trim()}` });
+            }
           }
         }
-      }
-    });
+      },
+      true
+    );
   });
 
   await page.goto(url, { waitUntil: "domcontentloaded" });
