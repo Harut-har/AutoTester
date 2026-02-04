@@ -16,8 +16,8 @@ program
 program
   .command("db:init")
   .description("initialize SQLite schema")
-  .action(() => {
-    initDb();
+  .action(async () => {
+    await initDb();
     console.log("DB initialized.");
   });
 
@@ -27,7 +27,7 @@ program
   .option("--url <url>", "base URL")
   .option("--name <name>", "macro name")
   .action(async (options) => {
-    initDb();
+    await initDb();
     await recordMacro(options);
   });
 
@@ -39,7 +39,7 @@ program
   .option("--base-url <url>", "override base URL")
   .option("--stop-on-fail <bool>", "stop on first failure (default true)", "true")
   .action(async (options) => {
-    initDb();
+    await initDb();
     const stopOnFail = String(options.stopOnFail).toLowerCase() !== "false";
     await runMacro({ macroId: options.macroId, env: options.env, baseUrl: options.baseUrl, stopOnFail });
   });
@@ -47,8 +47,8 @@ program
 program
   .command("list")
   .description("list macros")
-  .action(() => {
-    initDb();
+  .action(async () => {
+    await initDb();
     const repo = new MacroRepository(getDb());
     const rows = repo.list();
     if (rows.length === 0) {
@@ -78,7 +78,7 @@ program
   .command("macro:show")
   .description("show macro steps")
   .option("--macro-id <id>", "macro id")
-  .action((options) => {
+  .action(async (options) => {
     const macroId = Number(options.macroId);
     if (!Number.isFinite(macroId)) {
       console.error("Missing or invalid --macro-id");
@@ -86,7 +86,7 @@ program
       return;
     }
 
-    initDb();
+    await initDb();
     const repo = new MacroRepository(getDb());
     const steps = repo.getAllSteps(macroId);
     if (steps.length === 0) {
@@ -118,13 +118,13 @@ program
   .option("--macro-id <id>", "macro id")
   .option("--order <n>", "order index")
   .option("--step-id <id>", "step id")
-  .action((options) => {
+  .action(async (options) => {
     const macroId = Number(options.macroId);
     const orderIndex = options.order ? Number(options.order) : NaN;
     const stepId = options.stepId ? Number(options.stepId) : NaN;
 
     if (Number.isFinite(stepId)) {
-      initDb();
+      await initDb();
       const repo = new MacroRepository(getDb());
       if (Number.isFinite(macroId)) {
         const ok = repo.isStepInMacro(stepId, macroId);
@@ -156,7 +156,7 @@ program
       return;
     }
 
-    initDb();
+    await initDb();
     const repo = new MacroRepository(getDb());
     const changes = repo.disableStepByOrder(macroId, orderIndex);
     if (changes === 0) {
@@ -214,7 +214,7 @@ program
   .description("show report by run id")
   .option("--run-id <id>", "run id")
   .option("--format <format>", "text|json|junit", "text")
-  .action((options) => {
+  .action(async (options) => {
     const runId = Number(options.runId);
     if (!Number.isFinite(runId)) {
       console.error("Missing or invalid --run-id");
@@ -238,7 +238,7 @@ program
     }
 
     if (format === "junit") {
-      initDb();
+      await initDb();
       const repo = new MacroRepository(getDb());
       const results = repo.getRunStepResults(runId);
       const tests = report.summary?.total ?? results.length;
