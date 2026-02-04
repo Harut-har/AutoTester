@@ -18,13 +18,44 @@ type MacroActionType =
   | "waitFor"
   | "assert";
 
+const RECORDED_EVENT_TYPES: ReadonlySet<RecordedEvent["type"]> = new Set([
+  "click",
+  "input",
+  "change",
+  "navigation",
+  "waitFor",
+  "assert",
+]);
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isLocator(value: unknown): value is Locator {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as Partial<Locator>;
+  if (maybe.type === "data" || maybe.type === "css" || maybe.type === "xpath") {
+    return typeof maybe.value === "string";
+  }
+  if (maybe.type === "role") {
+    return typeof maybe.role === "string" && (maybe.name === undefined || typeof maybe.name === "string");
+  }
+  return false;
+}
+
+function isRecordedEventPayload(payload: unknown): payload is RecordedEvent {
+  if (!payload || typeof payload !== "object") return false;
+  const maybe = payload as Partial<RecordedEvent>;
+  if (!maybe.type || !RECORDED_EVENT_TYPES.has(maybe.type as RecordedEvent["type"])) return false;
+  if (!Array.isArray(maybe.locators) || !maybe.locators.every(isLocator)) return false;
+  if (!(maybe.value === undefined || maybe.value === null || typeof maybe.value === "string")) return false;
+  return true;
 }
 
 export async function recordMacro(options: { url?: string; name?: string }): Promise<void> {
   const url = options.url;
   const name = options.name ?? "Untitled macro";
+  const debug = process.env.AUTOTESTER_DEBUG === "1";
 
   if (!isNonEmptyString(url)) {
     console.error("Missing --url");
@@ -57,9 +88,13 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
 
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext();
-  const page = await context.newPage();
 
-  await context.exposeBinding("__autotesterEvent", (_source, payload: RecordedEvent) => {
+  await context.exposeBinding("__autotesterEvent", (_source, payload: unknown) => {
+    if (!isRecordedEventPayload(payload)) {
+      if (debug) console.log("[recorder] ignored invalid recorder payload");
+      return;
+    }
+    if (debug) console.log(`[recorder] event=${payload.type} locators=${payload.locators.length}`);
     pushEvent(payload);
   });
 
@@ -69,7 +104,19 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     await browser.close();
   });
 
-  await page.addInitScript(() => {
+  await context.addInitScript((params: { debug: boolean }) => {
+    const debug = params.debug;
+    if (debug) {
+      console.log(`[autotester] recorder init: ${location.href}`);
+    }
+
+    type BrowserLocator =
+      | { type: "data"; value: string }
+      | { type: "role"; role: string; name?: string }
+      | { type: "css"; value: string }
+      | { type: "xpath"; value: string };
+    type BrowserRecorderPayload = { type: string; locators: BrowserLocator[]; value?: string | null };
+
     function getDataSelector(el: Element): string | null {
       const dataTestId = el.getAttribute("data-testid");
       if (dataTestId) return `[data-testid="${dataTestId}"]`;
@@ -135,8 +182,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       return "/" + parts.join("/");
     }
 
-    function buildLocators(el: Element) {
-      const locators: any[] = [];
+    function buildLocators(el: Element): BrowserLocator[] {
+      const locators: BrowserLocator[] = [];
       const dataSel = getDataSelector(el);
       if (dataSel) locators.push({ type: "data", value: dataSel });
 
@@ -152,9 +199,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       return locators;
     }
 
-    function emit(payload: { type: string; locators: unknown[]; value?: string | null }) {
-      const publish = (window as { __autotesterEvent?: (event: { type: string; locators: unknown[]; value?: string | null }) => void })
-        .__autotesterEvent;
+    function emit(payload: BrowserRecorderPayload) {
+      const publish = (window as { __autotesterEvent?: (event: BrowserRecorderPayload) => void }).__autotesterEvent;
       if (typeof publish === "function") {
         publish(payload);
       }
@@ -198,13 +244,13 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       true
     );
 
-    const inputBuffer = new Map<string, { value: string; locators: unknown[]; timer: number | null }>();
+    const inputBuffer = new Map<string, { value: string; locators: BrowserLocator[]; timer: number | null }>();
 
-    function keyFromLocators(locators: unknown[]): string {
+    function keyFromLocators(locators: BrowserLocator[]): string {
       if (!locators || locators.length === 0) return "";
-      const data = locators.find((l) => typeof l === "object" && l !== null && "type" in l && (l as { type?: string }).type === "data");
+      const data = locators.find((l) => l.type === "data");
       if (data) return JSON.stringify(data);
-      const css = locators.find((l) => typeof l === "object" && l !== null && "type" in l && (l as { type?: string }).type === "css");
+      const css = locators.find((l) => l.type === "css");
       if (css) return JSON.stringify(css);
       return JSON.stringify(locators[0]);
     }
@@ -282,13 +328,13 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       emit({ type: "navigation", locators: [], value: location.href });
     }
 
-    history.pushState = function (...args) {
-      const result = originalPushState.apply(this, args as any);
+    history.pushState = function (...args: Parameters<History["pushState"]>) {
+      const result = originalPushState.apply(this, args);
       emitNavigation();
       return result;
     };
-    history.replaceState = function (...args) {
-      const result = originalReplaceState.apply(this, args as any);
+    history.replaceState = function (...args: Parameters<History["replaceState"]>) {
+      const result = originalReplaceState.apply(this, args);
       emitNavigation();
       return result;
     };
@@ -339,7 +385,14 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       },
       true
     );
-  });
+  }, { debug });
+
+  const page = await context.newPage();
+  if (debug) {
+    page.on("console", (msg) => {
+      console.log(`[browser:${msg.type()}] ${msg.text()}`);
+    });
+  }
 
   await page.goto(url, { waitUntil: "domcontentloaded" });
 
