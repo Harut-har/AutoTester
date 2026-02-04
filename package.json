@@ -12,6 +12,7 @@
     "macro:disable-step": "tsx src/cli.ts macro:disable-step",
     "show-report": "tsx src/cli.ts show-report",
     "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck",
     "db:init": "tsx src/cli.ts db:init",
     "pw:install": "playwright install"
   },
