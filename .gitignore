@@ -3,3 +3,8 @@ dist/
 *.log
 .env
 .DS_Store
+
+*.sqlite
+*.db
+autotester.sqlite
+
