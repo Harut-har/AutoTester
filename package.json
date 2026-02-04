@@ -1,0 +1,29 @@
+﻿{
+  "name": "autotester",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "record": "tsx src/cli.ts record",
+    "run": "tsx src/cli.ts run",
+    "list": "tsx src/cli.ts list",
+    "macro:show": "tsx src/cli.ts macro:show",
+    "macro:disable-step": "tsx src/cli.ts macro:disable-step",
+    "show-report": "tsx src/cli.ts show-report",
+    "typecheck": "tsc --noEmit",
+    "db:init": "tsx src/cli.ts db:init",
+    "pw:install": "playwright install"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.1",
+    "commander": "^12.1.0",
+    "playwright": "^1.49.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^22.13.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
