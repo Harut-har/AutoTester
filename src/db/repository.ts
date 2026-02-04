@@ -75,6 +75,12 @@ export class MacroRepository {
     return (row as { id: number; name: string; base_url: string | null }) ?? null;
   }
 
+  renameMacro(params: { macroId: number; name: string }): boolean {
+    const stmt = this.db.prepare("UPDATE macros SET name = ? WHERE id = ?");
+    const info = stmt.run(params.name, params.macroId);
+    return info.changes > 0;
+  }
+
   getSteps(macroId: number): MacroStep[] {
     const rows = this.db
       .prepare("SELECT id, macro_id, order_index, action_type, locators, value, timeouts, enabled FROM macro_steps WHERE macro_id = ? AND enabled = 1 ORDER BY order_index")

@@ -47,6 +47,9 @@ npm run macro:show -- --macro-id 1
 # отключить шаг
 npm run macro:disable-step -- --macro-id 1 --order 3
 
+# переименовать макрос
+npx tsx src/cli.ts macro:rename --macro-id 1 --name "Updated login flow"
+
 # отчёт
 npm run show-report -- --run-id 42 --format html
 ```

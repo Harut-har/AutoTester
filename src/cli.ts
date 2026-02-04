@@ -168,6 +168,38 @@ program
     console.log("Step disabled.");
   });
 
+program
+  .command("macro:rename")
+  .description("rename a macro")
+  .option("--macro-id <number>", "macro id")
+  .option("--name <string>", "new macro name")
+  .action(async (options) => {
+    const macroId = Number(options.macroId);
+    if (!Number.isInteger(macroId) || macroId <= 0) {
+      console.error("Missing or invalid --macro-id (must be a positive integer)");
+      process.exitCode = 1;
+      return;
+    }
+
+    const name = String(options.name ?? "").trim();
+    if (name.length === 0) {
+      console.error("Missing or invalid --name (must be non-empty)");
+      process.exitCode = 1;
+      return;
+    }
+
+    await initDb();
+    const repo = new MacroRepository(getDb());
+    const renamed = repo.renameMacro({ macroId, name });
+    if (!renamed) {
+      console.error(`Macro ${macroId} not found.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`Renamed macro ${macroId} to ${name}`);
+  });
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
