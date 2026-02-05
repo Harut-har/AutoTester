@@ -84,6 +84,7 @@ export async function runMacro(options: {
   stopOnFail?: boolean;
   headless?: boolean;
   timeoutMs?: number;
+  waitUntil?: "commit" | "domcontentloaded" | "load" | "networkidle";
 }): Promise<void> {
   const macroId = Number(options.macroId);
   if (!Number.isFinite(macroId)) {
@@ -126,6 +127,7 @@ export async function runMacro(options: {
   const stepTimeoutDefault = envConfig?.timeouts?.step ?? 5000;
   const globalTimeout = envConfig?.timeouts?.global ?? 10000;
   const navigationTimeout = options.timeoutMs ?? globalTimeout;
+  const waitUntil = options.waitUntil ?? "domcontentloaded";
   const stopOnFail = options.stopOnFail ?? true;
 
   const browser = await launcher.launch({ headless });
@@ -146,7 +148,7 @@ export async function runMacro(options: {
 
   const baseUrl = options.baseUrl ?? envConfig?.baseURL ?? macro.base_url ?? null;
   if (baseUrl) {
-    await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: navigationTimeout });
+    await page.goto(baseUrl, { waitUntil, timeout: navigationTimeout });
   }
 
   for (let i = 0; i < steps.length; i += 1) {
@@ -164,7 +166,7 @@ export async function runMacro(options: {
       if (step.action_type === "navigation") {
         const targetUrl = step.value ?? "";
         if (targetUrl) {
-          await page.waitForURL(`**${targetUrl}**`, { timeout: navigationTimeout });
+          await page.waitForURL(`**${targetUrl}**`, { waitUntil, timeout: navigationTimeout });
         }
         repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         runSummary.passed += 1;
@@ -174,7 +176,7 @@ export async function runMacro(options: {
       if (step.action_type === "waitFor") {
         if (step.value && step.value.startsWith("url:")) {
           const urlPart = step.value.slice(4);
-          await page.waitForURL(`**${urlPart}**`, { timeout: navigationTimeout });
+          await page.waitForURL(`**${urlPart}**`, { waitUntil, timeout: navigationTimeout });
           repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         } else {
           const found = await findLocator(page, step.locators);
