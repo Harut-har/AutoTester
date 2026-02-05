@@ -43,10 +43,23 @@ program
   .option("--env <name>", "environment name")
   .option("--base-url <url>", "override base URL")
   .option("--stop-on-fail <bool>", "stop on first failure (default true)", "true")
+  .option("--headless <bool>", "run headless (default true)")
+  .option("--headed", "run headed (alias for --headless false)")
+  .option("--timeout-ms <number>", "navigation timeout in ms")
   .action(async (options) => {
     await initDb();
     const stopOnFail = String(options.stopOnFail).toLowerCase() !== "false";
-    await runMacro({ macroId: options.macroId, env: options.env, baseUrl: options.baseUrl, stopOnFail });
+    const headless =
+      options.headed === true ? false : typeof options.headless === "string" ? String(options.headless).toLowerCase() !== "false" : undefined;
+    const timeoutMs = Number(options.timeoutMs);
+    await runMacro({
+      macroId: options.macroId,
+      env: options.env,
+      baseUrl: options.baseUrl,
+      stopOnFail,
+      headless,
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
+    });
   });
 
 program
