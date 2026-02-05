@@ -24,13 +24,17 @@ program
 program
   .command("record")
   .description("record a macro")
+  .argument("[url]", "base URL")
   .option("--url <url>", "base URL")
   .option("--name <name>", "macro name")
-  .action(async (options) => {
-    await initDb();
-    await recordMacro(options);
-  });
+  .action(async (urlArg: string | undefined, options: { url?: string; name?: string }) => {
+    const urlFromOption = typeof options.url === "string" ? options.url : undefined;
+    const urlFromEnv = process.env.npm_config_url;
+    const url = urlFromOption ?? urlArg ?? urlFromEnv;
 
+    await initDb();
+    await recordMacro({ url, name: options.name });
+  });
 program
   .command("run")
   .description("run a macro")
@@ -286,3 +290,4 @@ program
   });
 
 program.parseAsync(process.argv);
+

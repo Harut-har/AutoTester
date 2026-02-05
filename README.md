@@ -33,7 +33,7 @@ npm install
 npm run pw:install
 
 # запись
-npm run record -- --url https://example.com --name "Login flow"
+npm run record -- --url "http://127.0.0.1:3011/learning_ai/" --name "Login flow"
 
 # запуск
 npm run run -- --macro-id 1 --env dev --stop-on-fail true
@@ -152,3 +152,4 @@ JUnit XML:
 ## Diff/Git
 
 Если `git diff` недоступен в текущем окружении/директории, используйте альтернативы (например, сравнение файлов вручную или через IDE).
+
