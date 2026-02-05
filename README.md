@@ -33,13 +33,13 @@ npm install
 npm run pw:install
 
 # запись
-npm run cli -- record -- --url "http://127.0.0.1:3011/learning_ai/" --name "Login flow"
+npm run cli:record -- --url "http://127.0.0.1:3011/learning_ai/" --name "Login flow"
 
 # запуск
-npm run cli -- run --macro-id 1 --env dev --stop-on-fail true
+npm run cli:run -- --macro-id 1 --env dev --stop-on-fail true
 
 # запуск (headed + увеличенный таймаут навигации)
-npm run cli -- run --macro-id 1 --env dev --headless false --timeout-ms 30000
+npm run cli:run -- --macro-id 1 --env dev --headless false --timeout-ms 30000
 
 # список
 npm run list

@@ -5,6 +5,12 @@
   "type": "module",
   "scripts": {
     "cli": "tsx src/cli.ts",
+    "cli:run": "tsx src/cli.ts run",
+    "cli:record": "tsx src/cli.ts record",
+    "cli:list": "tsx src/cli.ts list",
+    "cli:show": "tsx src/cli.ts macro:show",
+    "cli:rename": "tsx src/cli.ts macro:rename",
+    "cli:report": "tsx src/cli.ts show-report",
     "record": "tsx src/cli.ts record",
     "run": "tsx src/cli.ts run",
     "list": "tsx src/cli.ts list",
