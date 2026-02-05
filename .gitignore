@@ -11,3 +11,10 @@ autotester.sqlite
 
 node_modules/
 
+
+reports/
+*.zip
+*.png
+*.html
+*.json
+
