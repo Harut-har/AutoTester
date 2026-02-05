@@ -326,6 +326,26 @@ export async function runMacro(options: {
 
   repo.finishRun(runId, { status: failed ? "FAIL" : "PASS", summary: runSummary });
 
+  const runStepResults = repo.getRunStepResults(runId);
+  const resultById = new Map<number, (typeof runStepResults)[number]>();
+  for (const r of runStepResults) {
+    resultById.set(r.step_id, r);
+  }
+  const reportSteps = steps.map((s) => {
+    const result = resultById.get(s.id);
+    return {
+      step_id: s.id,
+      order_index: s.order_index,
+      action_type: s.action_type,
+      status: result?.status ?? "UNKNOWN",
+      error_message: result?.error_message ?? null,
+      locators: s.locators,
+      value: s.value ?? null,
+      enabled: s.enabled,
+      timeouts: s.timeouts,
+    };
+  });
+
   const report = {
     runId,
     macroId,
@@ -335,6 +355,7 @@ export async function runMacro(options: {
     headless,
     status: failed ? "FAIL" : "PASS",
     summary: runSummary,
+    steps: reportSteps,
     artifacts: tracePath ? { trace: tracePath } : undefined,
   };
 
@@ -350,3 +371,4 @@ export async function runMacro(options: {
     process.exitCode = 1;
   }
 }
+
