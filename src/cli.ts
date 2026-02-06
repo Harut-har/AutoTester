@@ -39,6 +39,11 @@ program
 program
   .command("run")
   .description("run a macro")
+  .argument("[macroId]", "macro id")
+  .argument("[baseUrl]", "base URL")
+  .argument("[env]", "environment name")
+  .argument("[timeoutMs]", "navigation timeout in ms")
+  .argument("[waitUntil]", "commit|domcontentloaded|load|networkidle")
   .option("--macro-id <id>", "macro id")
   .option("--env <name>", "environment name")
   .option("--base-url <url>", "override base URL")
@@ -47,21 +52,30 @@ program
   .option("--headed", "run headed (alias for --headless false)")
   .option("--timeout-ms <number>", "navigation timeout in ms")
   .option("--wait-until <state>", "commit|domcontentloaded|load|networkidle")
-  .action(async (options) => {
+  .action(
+    async (
+      macroIdArg: string | undefined,
+      baseUrlArg: string | undefined,
+      envArg: string | undefined,
+      timeoutMsArg: string | undefined,
+      waitUntilArg: string | undefined,
+      options
+    ) => {
     await initDb();
     const stopOnFail = String(options.stopOnFail).toLowerCase() !== "false";
     const headless =
       options.headed === true ? false : typeof options.headless === "string" ? String(options.headless).toLowerCase() !== "false" : undefined;
-    const timeoutMs = Number(options.timeoutMs);
-    const waitUntilRaw = typeof options.waitUntil === "string" ? options.waitUntil.toLowerCase() : undefined;
+    const timeoutMsValue = options.timeoutMs ?? timeoutMsArg;
+    const timeoutMs = Number(timeoutMsValue);
+    const waitUntilRaw = typeof options.waitUntil === "string" ? options.waitUntil.toLowerCase() : typeof waitUntilArg === "string" ? waitUntilArg.toLowerCase() : undefined;
     const waitUntil =
       waitUntilRaw === "commit" || waitUntilRaw === "domcontentloaded" || waitUntilRaw === "load" || waitUntilRaw === "networkidle"
         ? waitUntilRaw
         : undefined;
     await runMacro({
-      macroId: options.macroId,
-      env: options.env,
-      baseUrl: options.baseUrl,
+      macroId: options.macroId ?? macroIdArg,
+      env: options.env ?? envArg,
+      baseUrl: options.baseUrl ?? baseUrlArg,
       stopOnFail,
       headless,
       timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,

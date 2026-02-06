@@ -15,6 +15,28 @@ type EnvsFile = Record<string, EnvConfig>;
 
 type EnvLoadResult = { config: EnvConfig | null; error?: string };
 
+function isAbsoluteUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveTargetUrl(value: string, baseUrl: string | null): string {
+  if (isAbsoluteUrl(value)) return value;
+  if (baseUrl && baseUrl.trim().length > 0) {
+    return new URL(value, baseUrl).toString();
+  }
+  return value;
+}
+
+function buildUrlMatcher(value: string, baseUrl: string | null): string | RegExp {
+  const resolved = resolveTargetUrl(value, baseUrl);
+  if (isAbsoluteUrl(resolved)) return resolved;
+  return new RegExp(escapeRegExp(resolved));
+}
+
 function loadEnvConfig(envName: string): EnvLoadResult {
   const filePath = path.resolve(process.cwd(), "envs.json");
   if (!fs.existsSync(filePath)) return { config: null };
@@ -165,8 +187,23 @@ export async function runMacro(options: {
     try {
       if (step.action_type === "navigation") {
         const targetUrl = step.value ?? "";
-        if (targetUrl) {
-          await page.waitForURL(`**${targetUrl}**`, { waitUntil, timeout: navigationTimeout });
+        if (!targetUrl) {
+          throw new Error("Missing navigation URL");
+        }
+        const resolvedUrl = resolveTargetUrl(targetUrl, baseUrl);
+        const response = await page.goto(resolvedUrl, { waitUntil, timeout: navigationTimeout });
+        if (response && response.status() >= 400) {
+          throw new Error(`Navigation failed: ${response.status()} ${response.url()}`);
+        }
+        const title = await page.title();
+        if (title.toLowerCase().includes("not found") && title.toLowerCase().includes("werkzeug")) {
+          throw new Error(`Navigation failed: Werkzeug NotFound at ${page.url()}`);
+        }
+        if (title.toLowerCase().includes("not found")) {
+          const content = await page.content();
+          if (content.includes("Werkzeug") && content.includes("Not Found")) {
+            throw new Error(`Navigation failed: Werkzeug NotFound at ${page.url()}`);
+          }
         }
         repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         runSummary.passed += 1;
@@ -176,9 +213,13 @@ export async function runMacro(options: {
       if (step.action_type === "waitFor") {
         if (step.value && step.value.startsWith("url:")) {
           const urlPart = step.value.slice(4);
-          await page.waitForURL(`**${urlPart}**`, { waitUntil, timeout: navigationTimeout });
+          const matcher = buildUrlMatcher(urlPart, baseUrl);
+          await page.waitForURL(matcher, { waitUntil, timeout: navigationTimeout });
           repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         } else {
+          if (!step.locators || step.locators.length === 0) {
+            throw new Error("No locators for step");
+          }
           const found = await findLocator(page, step.locators);
           if (!found) throw new Error("Locator not found");
           await ensureVisibleEnabled(found.locator, stepTimeout);
@@ -198,13 +239,25 @@ export async function runMacro(options: {
       if (step.action_type === "assert") {
         if (step.value && step.value.startsWith("url:")) {
           const urlPart = step.value.slice(4);
-          const currentPath = new URL(page.url()).pathname;
-          if (!currentPath.includes(urlPart)) {
-            throw new Error(`URL does not contain ${urlPart}`);
+          const matcher = buildUrlMatcher(urlPart, baseUrl);
+          await page.waitForURL(matcher, { waitUntil, timeout: navigationTimeout });
+          const expected = resolveTargetUrl(urlPart, baseUrl);
+          if (isAbsoluteUrl(expected)) {
+            if (!page.url().includes(expected)) {
+              throw new Error(`URL does not contain ${expected}`);
+            }
+          } else {
+            const currentPath = new URL(page.url()).pathname;
+            if (!currentPath.includes(expected)) {
+              throw new Error(`URL does not contain ${expected}`);
+            }
           }
           repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
           runSummary.passed += 1;
           continue;
+        }
+        if (!step.locators || step.locators.length === 0) {
+          throw new Error("No locators for step");
         }
         const found = await findLocator(page, step.locators);
         if (!found) throw new Error("Locator not found");
@@ -228,6 +281,9 @@ export async function runMacro(options: {
         continue;
       }
 
+      if (!step.locators || step.locators.length === 0) {
+        throw new Error("No locators for step");
+      }
       const found = await findLocator(page, step.locators);
       if (!found) throw new Error("Locator not found");
 
@@ -240,9 +296,17 @@ export async function runMacro(options: {
         case "type": {
           let value = step.value ?? "";
           if (value === "__SECRET__") {
-            const secret = process.env.AUTOTESTER_SECRET_PASSWORD;
-            if (!secret) throw new Error("Missing AUTOTESTER_SECRET_PASSWORD for secret field");
-            value = secret;
+            repo.addStepResult({
+              runId,
+              stepId: step.id,
+              status: "SKIPPED",
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              errorMessage: "secret value skipped",
+              usedLocator: found.used,
+            });
+            runSummary.skipped += 1;
+            continue;
           }
           await found.locator.fill(value);
           break;
@@ -270,6 +334,8 @@ export async function runMacro(options: {
       });
       runSummary.passed += 1;
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`Step ${step.order_index} failed: ${errorMessage}`);
       failed = true;
       runSummary.failed += 1;
       const screenshotPath = path.join(reportsDir, `run-${runId}-step-${step.order_index}.png`);
@@ -284,7 +350,7 @@ export async function runMacro(options: {
         status: "FAIL",
         startedAt,
         finishedAt: new Date().toISOString(),
-        errorMessage: err instanceof Error ? err.message : String(err),
+        errorMessage,
         screenshotPath,
       });
       if (screenshotPath) {
@@ -344,6 +410,7 @@ export async function runMacro(options: {
       action_type: s.action_type,
       status: result?.status ?? "UNKNOWN",
       error_message: result?.error_message ?? null,
+      screenshot_path: result?.screenshot_path ?? null,
       locators: s.locators,
       value: s.value ?? null,
       enabled: s.enabled,

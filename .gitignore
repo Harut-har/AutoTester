@@ -13,8 +13,13 @@ node_modules/
 
 
 reports/
+reports/*.json
+reports/*.html
+reports/*.png
+reports/*.zip
+
+reports/
 *.zip
 *.png
 *.html
 *.json
-

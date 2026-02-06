@@ -23,6 +23,7 @@ export type RunStepResult = {
   action_type: string;
   status: string;
   error_message: string | null;
+  screenshot_path: string | null;
 };
 
 export type RunMeta = {
@@ -165,7 +166,7 @@ export class MacroRepository {
   getRunStepResults(runId: number): RunStepResult[] {
     const rows = this.db
       .prepare(
-        "SELECT r.step_id, s.order_index, s.action_type, r.status, r.error_message FROM run_step_results r JOIN macro_steps s ON r.step_id = s.id WHERE r.run_id = ? ORDER BY s.order_index"
+        "SELECT r.step_id, s.order_index, s.action_type, r.status, r.error_message, r.screenshot_path FROM run_step_results r JOIN macro_steps s ON r.step_id = s.id WHERE r.run_id = ? ORDER BY s.order_index"
       )
       .all(runId);
     return rows as RunStepResult[];
