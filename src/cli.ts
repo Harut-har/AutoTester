@@ -116,9 +116,10 @@ function formatLocator(loc: Locator): string {
 program
   .command("macro:show")
   .description("show macro steps")
+  .argument("[macroId]", "macro id")
   .option("--macro-id <id>", "macro id")
-  .action(async (options) => {
-    const macroId = Number(options.macroId);
+  .action(async (macroIdArg: string | undefined, options) => {
+    const macroId = Number(options.macroId ?? macroIdArg);
     if (!Number.isFinite(macroId)) {
       console.error("Missing or invalid --macro-id");
       process.exitCode = 1;
@@ -242,11 +243,13 @@ program
 program
   .command("macro:seed-ui")
   .description("create a UI smoke macro using data-testid selectors")
+  .argument("[name]", "macro name")
+  .argument("[url]", "base URL (profile page)")
   .option("--name <string>", "macro name", "ui_smoke")
   .option("--url <url>", "base URL (profile page)")
-  .action(async (options) => {
-    const name = String(options.name ?? "").trim();
-    const url = String(options.url ?? "").trim();
+  .action(async (nameArg: string | undefined, urlArg: string | undefined, options) => {
+    const name = String(options.name ?? nameArg ?? "").trim();
+    const url = String(options.url ?? urlArg ?? "").trim();
     if (name.length === 0 || url.length === 0) {
       console.error("Missing --name or --url");
       process.exitCode = 1;
@@ -289,10 +292,12 @@ function formatLocatorList(locators: Locator[] | undefined): string {
 program
   .command("show-report")
   .description("show report by run id")
+  .argument("[runId]", "run id")
+  .argument("[format]", "text|json|html|junit")
   .option("--run-id <id>", "run id")
   .option("--format <format>", "text|json|html|junit", "text")
-  .action(async (options) => {
-    const runId = Number(options.runId);
+  .action(async (runIdArg: string | undefined, formatArg: string | undefined, options) => {
+    const runId = Number(options.runId ?? runIdArg);
     if (!Number.isFinite(runId)) {
       console.error("Missing or invalid --run-id");
       process.exitCode = 1;
@@ -307,7 +312,9 @@ program
     }
 
     const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
-    const format = String(options.format || "text").toLowerCase();
+    const formatOption = typeof options.format === "string" ? options.format : undefined;
+    const format =
+      String((formatArg ?? (formatOption === "text" ? undefined : formatOption)) ?? "text").toLowerCase();
 
     if (format === "json") {
       console.log(fs.readFileSync(reportPath, "utf-8"));
