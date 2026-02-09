@@ -24,6 +24,22 @@ UI macro recorder/runner для автотестов: record → store in DB →
 - `assertCss` (prop:expected)
 - `assertCursor` (expected cursor value)
 
+## UI чек‑лист (профиль ученика)
+
+Требуемые `data-testid` (для стабильных селекторов):
+- `profile-link`
+- `theme-toggle`
+- `logout-btn`
+- `continue-btn`
+- `catalog-btn`
+
+Готовый шаблон макроса (создаётся командой ниже) использует эти селекторы.
+
+Создание UI смоук‑макроса:
+```
+npm run cli:seed-ui -- --name "ui_smoke" --url "http://127.0.0.1:3011/learning_ai/profile"
+```
+
 ## Краткое состояние проекта (на сегодня)
 
 Что уже работает:

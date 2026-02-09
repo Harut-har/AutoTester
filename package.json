@@ -11,6 +11,7 @@
     "cli:show": "tsx src/cli.ts macro:show",
     "cli:rename": "tsx src/cli.ts macro:rename",
     "cli:report": "tsx src/cli.ts show-report",
+    "cli:seed-ui": "tsx src/cli.ts macro:seed-ui",
     "record": "tsx src/cli.ts record",
     "run": "tsx src/cli.ts run",
     "list": "tsx src/cli.ts list",

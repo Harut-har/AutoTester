@@ -239,6 +239,39 @@ program
     console.log(`Renamed macro ${macroId} to ${name}`);
   });
 
+program
+  .command("macro:seed-ui")
+  .description("create a UI smoke macro using data-testid selectors")
+  .option("--name <string>", "macro name", "ui_smoke")
+  .option("--url <url>", "base URL (profile page)")
+  .action(async (options) => {
+    const name = String(options.name ?? "").trim();
+    const url = String(options.url ?? "").trim();
+    if (name.length === 0 || url.length === 0) {
+      console.error("Missing --name or --url");
+      process.exitCode = 1;
+      return;
+    }
+
+    await initDb();
+    const repo = new MacroRepository(getDb());
+    const macroId = repo.createMacro({ name, baseUrl: url });
+
+    const steps = [
+      { orderIndex: 1, actionType: "hover", locators: [{ type: "data" as const, value: '[data-testid="profile-link"]' }] },
+      { orderIndex: 2, actionType: "assertCursor", locators: [{ type: "data" as const, value: '[data-testid="profile-link"]' }], value: "pointer" },
+      { orderIndex: 3, actionType: "click", locators: [{ type: "data" as const, value: '[data-testid="profile-link"]' }] },
+      { orderIndex: 4, actionType: "hover", locators: [{ type: "data" as const, value: '[data-testid="theme-toggle"]' }] },
+      { orderIndex: 5, actionType: "click", locators: [{ type: "data" as const, value: '[data-testid="theme-toggle"]' }] },
+      { orderIndex: 6, actionType: "hover", locators: [{ type: "data" as const, value: '[data-testid="continue-btn"]' }] },
+      { orderIndex: 7, actionType: "assertCursor", locators: [{ type: "data" as const, value: '[data-testid="continue-btn"]' }], value: "pointer" },
+      { orderIndex: 8, actionType: "click", locators: [{ type: "data" as const, value: '[data-testid="continue-btn"]' }] },
+    ];
+
+    repo.addSteps(macroId, steps);
+    console.log(`Seeded UI macro ${macroId} (${name})`);
+  });
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
