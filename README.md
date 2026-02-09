@@ -11,12 +11,40 @@ UI macro recorder/runner для автотестов: record → store in DB →
 
 **Поддерживаемые шаги (MVP)**
 - `click`
+- `dblclick`
+- `hover`
 - `type`
 - `select`
 - `check` / `uncheck`
+- `clickAt` (x,y или offset:x,y)
 - `navigation` (URL change)
+- `scrollTo` (y или x,y)
 - `waitFor` (element visible/enabled, URL; network idle — опционально, по умолчанию выключено из-за флейков на SPA)
 - `assert` (visible / text contains / url contains)
+- `assertCss` (prop:expected)
+- `assertCursor` (expected cursor value)
+
+## Краткое состояние проекта (на сегодня)
+
+Что уже работает:
+- Запись макросов в SQLite через CLI (`record`), воспроизведение (`run`), просмотр (`macro:show`).
+- Базовые шаги клика/ввода/выбора/навигации/ожиданий/ассертов.
+- Отчёты: JSON + HTML, скриншоты на падениях, trace на fail.
+- Windows‑friendly npm‑скрипты `cli:*` и POSIX‑совместимые вызовы `npx tsx src/cli.ts ...`.
+- Настройка среды через `envs.json`, таймауты навигации и `waitUntil`.
+
+Что пока не покрыто:
+- Проверки hover/active/focus/disabled, курсоров и “мертвых зон”.
+- Двойные клики, клики по координатам, проверки UI‑состояний.
+- Мультибраузерные прогоны и адаптив по вьюпортам.
+- Формат файловых макросов (JSON в `macros/`), сейчас хранение в SQLite.
+
+Минимальный “смоук”:
+1. `npm run cli:record -- --url "http://127.0.0.1:3011/learning_ai/" --name "learning_ai_smoke_v3"`
+2. `npm run cli:list`
+3. `npm run cli:show -- --macro-id <ID>`
+4. `npm run cli:run -- --macro-id <ID> --base-url "http://127.0.0.1:3011/learning_ai/" --env local --headed --timeout-ms 30000 --wait-until domcontentloaded`
+5. `npm run cli:report -- --run-id <RUN_ID> --format html`
 
 ## Быстрый старт (CLI)
 

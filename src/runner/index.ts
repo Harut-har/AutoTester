@@ -99,6 +99,24 @@ function resolveStepTimeout(step: { timeouts: string | null }, defaultMs: number
   return defaultMs;
 }
 
+function parseCoordPair(value: string): { x: number; y: number } | null {
+  const parts = value.split(",").map((p) => p.trim());
+  if (parts.length !== 2) return null;
+  const x = Number(parts[0]);
+  const y = Number(parts[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function parseCssExpectation(value: string): { prop: string; expected: string } | null {
+  const idx = value.indexOf(":");
+  if (idx <= 0) return null;
+  const prop = value.slice(0, idx).trim();
+  const expected = value.slice(idx + 1).trim();
+  if (!prop || !expected) return null;
+  return { prop, expected };
+}
+
 export async function runMacro(options: {
   macroId?: string;
   env?: string;
@@ -210,6 +228,23 @@ export async function runMacro(options: {
         continue;
       }
 
+      if (step.action_type === "scrollTo") {
+        const value = step.value ?? "";
+        const coord = parseCoordPair(value);
+        if (coord) {
+          await page.evaluate(({ x, y }) => window.scrollTo(x, y), coord);
+        } else {
+          const y = Number(value);
+          if (!Number.isFinite(y)) {
+            throw new Error("Invalid scrollTo value (expected x,y or y)");
+          }
+          await page.evaluate((yy) => window.scrollTo(0, yy), y);
+        }
+        repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
+        runSummary.passed += 1;
+        continue;
+      }
+
       if (step.action_type === "waitFor") {
         if (step.value && step.value.startsWith("url:")) {
           const urlPart = step.value.slice(4);
@@ -293,6 +328,30 @@ export async function runMacro(options: {
         case "click":
           await found.locator.click();
           break;
+        case "dblclick":
+          await found.locator.dblclick();
+          break;
+        case "hover":
+          await found.locator.hover();
+          break;
+        case "clickAt": {
+          const raw = step.value ?? "";
+          let coord: { x: number; y: number } | null = null;
+          if (raw.startsWith("offset:")) {
+            const offset = parseCoordPair(raw.slice("offset:".length));
+            if (!offset) throw new Error("Invalid clickAt offset value");
+            const box = await found.locator.boundingBox();
+            if (!box) throw new Error("Element has no bounding box");
+            coord = { x: box.x + offset.x, y: box.y + offset.y };
+          } else if (raw.startsWith("abs:")) {
+            coord = parseCoordPair(raw.slice("abs:".length));
+          } else {
+            coord = parseCoordPair(raw);
+          }
+          if (!coord) throw new Error("Invalid clickAt value (expected x,y or offset:x,y)");
+          await page.mouse.click(coord.x, coord.y);
+          break;
+        }
         case "type": {
           let value = step.value ?? "";
           if (value === "__SECRET__") {
@@ -309,6 +368,25 @@ export async function runMacro(options: {
             continue;
           }
           await found.locator.fill(value);
+          break;
+        }
+        case "assertCss": {
+          const raw = step.value ?? "";
+          const expectation = parseCssExpectation(raw);
+          if (!expectation) throw new Error("Invalid assertCss value (expected prop:expected)");
+          const actual = await found.locator.evaluate((el, prop) => getComputedStyle(el).getPropertyValue(prop), expectation.prop);
+          if (!actual.trim().includes(expectation.expected)) {
+            throw new Error(`CSS ${expectation.prop} does not include ${expectation.expected} (actual: ${actual.trim()})`);
+          }
+          break;
+        }
+        case "assertCursor": {
+          const expected = (step.value ?? "").trim();
+          if (!expected) throw new Error("Invalid assertCursor value");
+          const actual = await found.locator.evaluate((el) => getComputedStyle(el).cursor);
+          if (actual.trim() !== expected) {
+            throw new Error(`Cursor is ${actual.trim()} (expected ${expected})`);
+          }
           break;
         }
         case "select":
