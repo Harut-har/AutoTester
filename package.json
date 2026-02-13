@@ -20,16 +20,23 @@
     "show-report": "tsx src/cli.ts show-report",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:report": "playwright show-report",
     "db:init": "tsx src/cli.ts db:init",
     "pw:install": "playwright install"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.1",
     "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.1",
     "playwright": "^1.49.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.8",
+    "@types/pg": "^8.10.9",
     "@types/node": "^22.13.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

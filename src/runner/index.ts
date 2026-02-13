@@ -1,6 +1,6 @@
 ﻿import { chromium, firefox, webkit, type Locator as PwLocator, type Page } from "playwright";
-import { getDb, initDb } from "../db/index.js";
-import { MacroRepository, type Locator } from "../db/repository.js";
+import { createRepository, getDbProvider } from "../db/factory.js";
+import { type Locator } from "../db/repository.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -142,16 +142,24 @@ export async function runMacro(options: {
   }
   const envConfig = envResult.config;
 
-  initDb();
-  const repo = new MacroRepository(getDb());
-  const macro = repo.getMacro(macroId);
+  let repo: Awaited<ReturnType<typeof createRepository>>;
+  try {
+    repo = await createRepository();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`cannot connect to ${getDbProvider()}: ${message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const macro = await repo.getMacro(macroId);
   if (!macro) {
     console.error(`Macro ${macroId} not found`);
     process.exitCode = 1;
     return;
   }
 
-  const steps = repo.getAllSteps(macroId);
+  const steps = await repo.getAllSteps(macroId);
   if (steps.length === 0) {
     console.error("No steps found for macro");
     process.exitCode = 1;
@@ -176,7 +184,7 @@ export async function runMacro(options: {
 
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
 
-  const runId = repo.createRun({ macroId, envName, browser: browserName, headless });
+  const runId = await repo.createRun({ macroId, envName, browser: browserName, headless });
   const runSummary: { total: number; passed: number; failed: number; skipped: number; tracePath?: string | null } = {
     total: steps.length,
     passed: 0,
@@ -197,7 +205,7 @@ export async function runMacro(options: {
     const stepTimeout = resolveStepTimeout(step, stepTimeoutDefault);
 
     if (step.enabled === 0) {
-      repo.addStepResult({ runId, stepId: step.id, status: "SKIPPED", startedAt, finishedAt: new Date().toISOString() });
+      await repo.addStepResult({ runId, stepId: step.id, status: "SKIPPED", startedAt, finishedAt: new Date().toISOString() });
       runSummary.skipped += 1;
       continue;
     }
@@ -223,7 +231,7 @@ export async function runMacro(options: {
             throw new Error(`Navigation failed: Werkzeug NotFound at ${page.url()}`);
           }
         }
-        repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
+        await repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         runSummary.passed += 1;
         continue;
       }
@@ -240,7 +248,7 @@ export async function runMacro(options: {
           }
           await page.evaluate((yy) => window.scrollTo(0, yy), y);
         }
-        repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
+        await repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         runSummary.passed += 1;
         continue;
       }
@@ -250,7 +258,7 @@ export async function runMacro(options: {
           const urlPart = step.value.slice(4);
           const matcher = buildUrlMatcher(urlPart, baseUrl);
           await page.waitForURL(matcher, { waitUntil, timeout: navigationTimeout });
-          repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
+          await repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
         } else {
           if (!step.locators || step.locators.length === 0) {
             throw new Error("No locators for step");
@@ -258,7 +266,7 @@ export async function runMacro(options: {
           const found = await findLocator(page, step.locators);
           if (!found) throw new Error("Locator not found");
           await ensureVisibleEnabled(found.locator, stepTimeout);
-          repo.addStepResult({
+          await repo.addStepResult({
             runId,
             stepId: step.id,
             status: "PASS",
@@ -287,7 +295,7 @@ export async function runMacro(options: {
               throw new Error(`URL does not contain ${expected}`);
             }
           }
-          repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
+        await repo.addStepResult({ runId, stepId: step.id, status: "PASS", startedAt, finishedAt: new Date().toISOString() });
           runSummary.passed += 1;
           continue;
         }
@@ -304,7 +312,7 @@ export async function runMacro(options: {
             throw new Error(`Text does not contain ${expected}`);
           }
         }
-        repo.addStepResult({
+        await repo.addStepResult({
           runId,
           stepId: step.id,
           status: "PASS",
@@ -355,7 +363,7 @@ export async function runMacro(options: {
         case "type": {
           let value = step.value ?? "";
           if (value === "__SECRET__") {
-            repo.addStepResult({
+            await repo.addStepResult({
               runId,
               stepId: step.id,
               status: "SKIPPED",
@@ -402,7 +410,7 @@ export async function runMacro(options: {
           throw new Error(`Unsupported action_type: ${step.action_type}`);
       }
 
-      repo.addStepResult({
+      await repo.addStepResult({
         runId,
         stepId: step.id,
         status: "PASS",
@@ -422,7 +430,7 @@ export async function runMacro(options: {
       } catch {
         // ignore
       }
-      repo.addStepResult({
+      await repo.addStepResult({
         runId,
         stepId: step.id,
         status: "FAIL",
@@ -432,14 +440,14 @@ export async function runMacro(options: {
         screenshotPath,
       });
       if (screenshotPath) {
-        repo.addArtifact({ runId, type: "screenshot", storageUrl: screenshotPath });
+        await repo.addArtifact({ runId, type: "screenshot", storageUrl: screenshotPath });
       }
       if (stopOnFail) {
         for (let j = i + 1; j < steps.length; j += 1) {
           const rest = steps[j];
           const restStart = new Date().toISOString();
           if (rest.enabled === 0) {
-            repo.addStepResult({
+            await repo.addStepResult({
               runId,
               stepId: rest.id,
               status: "SKIPPED",
@@ -447,7 +455,7 @@ export async function runMacro(options: {
               finishedAt: new Date().toISOString(),
             });
           } else {
-            repo.addStepResult({
+            await repo.addStepResult({
               runId,
               stepId: rest.id,
               status: "SKIPPED",
@@ -467,15 +475,15 @@ export async function runMacro(options: {
   if (failed) {
     tracePath = path.join(reportsDir, `run-${runId}.zip`);
     await context.tracing.stop({ path: tracePath });
-    repo.addArtifact({ runId, type: "trace", storageUrl: tracePath });
+    await repo.addArtifact({ runId, type: "trace", storageUrl: tracePath });
     runSummary.tracePath = tracePath;
   } else {
     await context.tracing.stop();
   }
 
-  repo.finishRun(runId, { status: failed ? "FAIL" : "PASS", summary: runSummary });
+  await repo.finishRun(runId, { status: failed ? "FAIL" : "PASS", summary: runSummary });
 
-  const runStepResults = repo.getRunStepResults(runId);
+  const runStepResults = await repo.getRunStepResults(runId);
   const resultById = new Map<number, (typeof runStepResults)[number]>();
   for (const r of runStepResults) {
     resultById.set(r.step_id, r);

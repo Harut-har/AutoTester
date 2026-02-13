@@ -17,6 +17,7 @@ reports/*.json
 reports/*.html
 reports/*.png
 reports/*.zip
+.env
 
 reports/
 *.zip

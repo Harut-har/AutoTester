@@ -1,6 +1,6 @@
-﻿import { chromium } from "playwright";
-import { getDb, initDb } from "../db/index.js";
-import { MacroRepository, type Locator } from "../db/repository.js";
+﻿import { chromium, type Page } from "playwright";
+import { createRepository, getDbProvider } from "../db/factory.js";
+import { type Locator } from "../db/repository.js";
 
 type RecordedEvent = {
   type: "click" | "input" | "change" | "navigation" | "waitFor" | "assert";
@@ -63,11 +63,20 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     return;
   }
 
-  initDb();
-  const repo = new MacroRepository(getDb());
+  let repo: Awaited<ReturnType<typeof createRepository>>;
+  try {
+    repo = await createRepository();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`cannot connect to ${getDbProvider()}: ${message}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const events: RecordedEvent[] = [];
   let stopRequested = false;
+  let controlPageClosed = false;
+  let controlPage: Page | null = null;
 
   function pushEvent(payload: RecordedEvent) {
     const last = events[events.length - 1];
@@ -108,14 +117,35 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     pushEvent(payload);
   });
 
-  await context.exposeBinding("__autotesterStop", async () => {
+  async function stopRecording(): Promise<void> {
+    if (stopRequested) return;
     stopRequested = true;
-    await context.close();
-    await browser.close();
+    if (controlPage && !controlPage.isClosed()) {
+      controlPageClosed = true;
+      await controlPage.close().catch(() => undefined);
+    }
+    await context.close().catch(() => undefined);
+    await browser.close().catch(() => undefined);
+  }
+
+  await context.exposeBinding("__autotesterStop", async () => {
+    await stopRecording();
   });
 
-  await context.addInitScript((params: { debug: boolean }) => {
-    const debug = params.debug;
+  await context.exposeBinding("__autotesterControl", (_source, cmd: unknown) => {
+    const action = cmd && typeof cmd === "object" ? (cmd as { type?: string }).type : undefined;
+    if (action === "undo") {
+      events.pop();
+      return;
+    }
+    if (action === "clear") {
+      events.length = 0;
+    }
+  });
+
+  function recorderInitScript() {
+
+    const debug = "__AUTOTESTER_DEBUG__";
     if (debug) {
       console.log(`[autotester] recorder init: ${location.href}`);
     }
@@ -224,6 +254,7 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     }
 
     function send(type: string, target: Element, value?: string | null) {
+      if (!recordingEnabled) return;
       const locators = buildLocators(target);
       emit({ type, locators, value });
     }
@@ -241,12 +272,17 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       );
     }
 
+    function isRecorderPanelElement(target: Element | null): boolean {
+      return false;
+    }
+
     let lastNormalizedClick: Element | null = null;
     let lastPointerElement: Element | null = null;
+    let recordingEnabled = true;
 
     document.addEventListener("mousemove", (e) => {
       const el = document.elementFromPoint(e.clientX, e.clientY);
-      if (el) lastPointerElement = el;
+      if (el && !isRecorderPanelElement(el)) lastPointerElement = el;
     });
 
     document.addEventListener(
@@ -254,6 +290,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       (e) => {
         const target = resolveElement(e.target);
         if (!target) return;
+        if (isRecorderPanelElement(target)) return;
+        if (!recordingEnabled) return;
         const normalized = normalizeTarget(target);
         if (debug) {
           console.log("[autotester] click", normalized.tagName, normalized.id || "", normalized.className || "");
@@ -303,6 +341,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       (e) => {
         const target = resolveElement(e.target);
         if (!target) return;
+        if (isRecorderPanelElement(target)) return;
+        if (!recordingEnabled) return;
         if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
           const isSecret =
             target.type === "password" || target.getAttribute("autocomplete") === "current-password";
@@ -321,6 +361,7 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       (e) => {
         const target = resolveElement(e.target);
         if (!target) return;
+        if (isRecorderPanelElement(target)) return;
         if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
         const locators = buildLocators(target);
         const key = keyFromLocators(locators);
@@ -334,6 +375,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       (e) => {
         const target = resolveElement(e.target);
         if (!target) return;
+        if (isRecorderPanelElement(target)) return;
+        if (!recordingEnabled) return;
         if (target instanceof HTMLSelectElement) {
           if (debug) {
             console.log("[autotester] change", target.tagName, target.value);
@@ -354,6 +397,7 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     const originalReplaceState = history.replaceState;
 
     function emitNavigation() {
+      if (!recordingEnabled) return;
       flushAllInputs();
       emit({ type: "navigation", locators: [], value: location.href });
     }
@@ -375,6 +419,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     document.addEventListener(
       "keydown",
       (e) => {
+        const active = document.activeElement instanceof Element ? document.activeElement : null;
+        if (isRecorderPanelElement(active)) return;
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "s") {
           e.preventDefault();
           if (debug) console.log("[autotester] hotkey", e.key);
@@ -387,21 +433,21 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
           e.preventDefault();
           if (debug) console.log("[autotester] hotkey", e.key);
           const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
-          if (target) send("waitFor", normalizeTarget(target));
+          if (target && !isRecorderPanelElement(target)) send("waitFor", normalizeTarget(target));
         }
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
           e.preventDefault();
           if (debug) console.log("[autotester] hotkey", e.key);
           const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
-          if (target) send("assert", normalizeTarget(target));
+          if (target && !isRecorderPanelElement(target)) send("assert", normalizeTarget(target));
         }
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "u") {
           e.preventDefault();
           if (debug) console.log("[autotester] hotkey", e.key);
           const pathname = location.pathname || "/";
-          emit({ type: "assert", locators: [], value: `url:${pathname}` });
+          if (recordingEnabled) emit({ type: "assert", locators: [], value: `url:${pathname}` });
         }
 
         if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
@@ -410,32 +456,263 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
           const text = window.prompt("Text contains:");
           if (text && text.trim().length > 0) {
             const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
-            if (target) {
+            if (target && !isRecorderPanelElement(target)) {
               const normalized = normalizeTarget(target);
               const locators = buildLocators(normalized);
-              emit({ type: "assert", locators, value: `text:${text.trim()}` });
+              if (recordingEnabled) emit({ type: "assert", locators, value: `text:${text.trim()}` });
             }
           }
         }
       },
       true
     );
-  }, { debug });
+
+    (window as { __autotesterCommand?: (cmd: { type: string; text?: string }) => { ok: boolean; reason?: string; recordingEnabled?: boolean } }).__autotesterCommand = (cmd) => {
+      if (!cmd || typeof cmd.type !== "string") return { ok: false, reason: "invalid" };
+      const target = lastNormalizedClick || lastPointerElement || (document.activeElement as Element | null);
+      if (cmd.type === "toggleRecording") {
+        recordingEnabled = !recordingEnabled;
+        return { ok: true, recordingEnabled };
+      }
+      if (cmd.type === "wait") {
+        if (!target) return { ok: false, reason: "no-target" };
+        send("waitFor", normalizeTarget(target));
+        return { ok: true };
+      }
+      if (cmd.type === "assertVisible") {
+        if (!target) return { ok: false, reason: "no-target" };
+        send("assert", normalizeTarget(target));
+        return { ok: true };
+      }
+      if (cmd.type === "assertUrl") {
+        const pathname = location.pathname || "/";
+        if (recordingEnabled) emit({ type: "assert", locators: [], value: `url:${pathname}` });
+        return { ok: true };
+      }
+      if (cmd.type === "assertText") {
+        const textValue = typeof cmd.text === "string" ? cmd.text.trim() : "";
+        if (!textValue) return { ok: false, reason: "no-text" };
+        if (!target) return { ok: false, reason: "no-target" };
+        const normalized = normalizeTarget(target);
+        const locators = buildLocators(normalized);
+        if (recordingEnabled) emit({ type: "assert", locators, value: `text:${textValue}` });
+        return { ok: true };
+      }
+      return { ok: false, reason: "unknown" };
+    };
+
+
+  }
+
+  const debugLiteral = debug ? "true" : "false";
+  const rawScript = recorderInitScript.toString();
+  const scriptContent = `
+(() => {
+  if (typeof (globalThis).__name !== "function") { (globalThis).__name = (t, _v) => t; }
+  ${rawScript.replace('const debug = "__AUTOTESTER_DEBUG__";', `const debug = ${debugLiteral};`)}
+  recorderInitScript();
+})();
+`;
+
+  await context.addInitScript(scriptContent);
+
 
   const page = await context.newPage();
+  controlPage = await context.newPage();
+  const controlHtml = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AutoTester Recorder Control</title>
+  <style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #0f1115;
+    color: #e6e6e6;
+  }
+  * { box-sizing: border-box; max-width: 100%; }
+  .wrap {
+    padding: 12px;
+    display: grid;
+    gap: 8px;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  input, button {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid #2d2f36;
+    background: #151922;
+    color: #e6e6e6;
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: #1b2130; border-color: #3a3f4b; }
+  .full { grid-column: 1 / -1; }
+  .label { font-size: 11px; color: #9aa3b2; margin-bottom: -6px; }
+  .status { font-size: 11px; color: #7ee787; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AutoTester Recorder</h1>
+    <div class="status" id="status">Recording</div>
+    <div class="row">
+      <button id="toggle">Pause</button>
+      <button id="stop">Stop</button>
+    </div>
+    <div class="label full">Email</div>
+    <input id="email" type="email" placeholder="Email" class="full" />
+    <button id="fillEmail" class="full">Fill Email</button>
+    <div class="label full">Text</div>
+    <input id="text" type="text" placeholder="Text" class="full" />
+    <button id="fillText" class="full">Fill Text</button>
+    <div class="row">
+      <button id="wait">Wait</button>
+      <button id="assertVisible">Assert Visible</button>
+    </div>
+    <div class="row">
+      <button id="assertUrl">Assert URL</button>
+      <button id="undo">Undo last</button>
+    </div>
+    <div class="label full">Text contains</div>
+    <input id="assertTextValue" type="text" placeholder="Text contains" class="full" />
+    <button id="assertText" class="full">Assert Text</button>
+  </div>
+  <script>
+    const send = (cmd) => window.autotesterControl(cmd);
+    const status = document.getElementById("status");
+    const toggle = document.getElementById("toggle");
+    toggle.addEventListener("click", async () => {
+      const res = await send({ type: "toggleRecording" });
+      const enabled = res && typeof res.recordingEnabled === "boolean" ? res.recordingEnabled : true;
+      toggle.textContent = enabled ? "Pause" : "Record";
+      status.textContent = enabled ? "Recording" : "Paused";
+      status.style.color = enabled ? "#7ee787" : "#f2cc60";
+    });
+    document.getElementById("stop").addEventListener("click", () => send({ type: "stop" }));
+    document.getElementById("fillEmail").addEventListener("click", () => {
+      send({ type: "fillEmail", value: document.getElementById("email").value });
+    });
+    document.getElementById("fillText").addEventListener("click", () => {
+      send({ type: "fillText", value: document.getElementById("text").value });
+    });
+    document.getElementById("wait").addEventListener("click", () => send({ type: "wait" }));
+    document.getElementById("assertVisible").addEventListener("click", () => send({ type: "assertVisible" }));
+    document.getElementById("assertUrl").addEventListener("click", () => send({ type: "assertUrl" }));
+    document.getElementById("assertText").addEventListener("click", () => {
+      send({ type: "assertText", text: document.getElementById("assertTextValue").value });
+    });
+    document.getElementById("undo").addEventListener("click", () => send({ type: "undo" }));
+  </script>
+</body>
+</html>`;
+
+  await controlPage.exposeBinding("autotesterControl", async (_source, cmd: any) => {
+    if (!cmd || typeof cmd.type !== "string") return { ok: false, reason: "invalid" };
+    if (cmd.type === "stop") {
+      await stopRecording();
+      return { ok: true };
+    }
+    if (cmd.type === "undo") {
+      events.pop();
+      return { ok: true };
+    }
+
+    const runOnPage = async (command: { type: string; text?: string }) => {
+      return page.evaluate((c) => (window as any).__autotesterCommand?.(c), command);
+    };
+
+    if (cmd.type === "toggleRecording") {
+      return runOnPage({ type: "toggleRecording" });
+    }
+    if (cmd.type === "wait") {
+      const result = await runOnPage({ type: "wait" });
+      if (result?.reason === "no-target") {
+        await controlPage?.evaluate(() => alert("No target selected"));
+      }
+      return result;
+    }
+    if (cmd.type === "assertVisible") {
+      const result = await runOnPage({ type: "assertVisible" });
+      if (result?.reason === "no-target") {
+        await controlPage?.evaluate(() => alert("No target selected"));
+      }
+      return result;
+    }
+    if (cmd.type === "assertUrl") {
+      return runOnPage({ type: "assertUrl" });
+    }
+    if (cmd.type === "assertText") {
+      const text = typeof cmd.text === "string" ? cmd.text : "";
+      const result = await runOnPage({ type: "assertText", text });
+      if (result?.reason === "no-target") {
+        await controlPage?.evaluate(() => alert("No target selected"));
+      }
+      return result;
+    }
+    if (cmd.type === "fillEmail" || cmd.type === "fillText") {
+      const value = typeof cmd.value === "string" ? cmd.value : "";
+      const filled = await page.evaluate((val) => {
+        const active = document.activeElement;
+        if (!active) return false;
+        if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+          active.value = val;
+          active.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        }
+        if (active instanceof HTMLElement && active.isContentEditable) {
+          active.textContent = val;
+          active.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        }
+        return false;
+      }, value);
+      if (!filled) {
+        await controlPage?.evaluate(() => alert("No active input"));
+      }
+      return { ok: filled };
+    }
+    return { ok: false, reason: "unknown" };
+  });
+
+  controlPage.on("close", () => {
+    if (controlPageClosed) return;
+    void stopRecording();
+  });
+
+  await controlPage.setViewportSize({ width: 420, height: 680 });
+  await controlPage.setContent(controlHtml);
+  await controlPage.bringToFront();
   if (debug) {
     page.on("console", (msg) => {
       console.log(`[browser:${msg.type()}] ${msg.text()}`);
     });
   }
 
-  await page.goto(url, { waitUntil: "domcontentloaded" });
-
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) {
       pushEvent({ type: "navigation", locators: [], value: frame.url() });
     }
   });
+
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  pushEvent({ type: "navigation", locators: [], value: page.url() });
+
+  console.log("Recorder started. Interact with the page. Press Ctrl+Shift+S to stop.");
 
   await new Promise<void>((resolve) => {
     const interval = setInterval(() => {
@@ -456,7 +733,7 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     return;
   }
 
-  const macroId = repo.createMacro({ name, baseUrl: url });
+  const macroId = await repo.createMacro({ name, baseUrl: url });
   const steps = events.map((e, idx) => {
     let actionType: MacroActionType = "click";
     let value = e.value ?? null;
@@ -482,7 +759,7 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     };
   });
 
-  repo.addSteps(macroId, steps);
+  await repo.addSteps(macroId, steps);
 
   console.log(`Recorded macro ${macroId} with ${steps.length} steps.`);
 }

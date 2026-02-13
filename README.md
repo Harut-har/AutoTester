@@ -1,6 +1,6 @@
 ﻿# AutoTester
 
-UI macro recorder/runner для автотестов: record → store in DB → replay → report.
+UI macro recorder/runner для автотестов: record → store in DB → replay → report. 
 
 **MVP рамки**
 - Стек: Node.js + Playwright.
@@ -168,6 +168,23 @@ JUnit XML:
 - `Ctrl+Shift+U` — добавить `assert url contains` (значение `url:<pathname>`)
 - `Ctrl+Shift+T` — добавить `assert text contains` (запрос через `prompt()`)
 
+## Recorder panel
+
+При запуске записи появляется плавающая панель **AutoTester Recorder** (draggable).
+
+Кнопки и поля:
+- `Record/Pause` — пауза/возобновление записи
+- `Stop` — завершить запись (эквивалент `Ctrl+Shift+S`)
+- `Email` + `Fill Email` — вставить email в активный input/textarea/contenteditable
+- `Text` + `Fill Text` — вставить текст в активный input/textarea/contenteditable
+- `Wait` — добавить `waitFor` для последнего нормализованного элемента
+- `Assert Visible` — добавить `assert visible`
+- `Assert URL` — добавить `assert url contains` (значение `url:<pathname>`)
+- `Text contains` + `Assert Text` — добавить `assert text contains` (значение `text:<value>`)
+- `Undo last` — удалить последний записанный шаг из буфера записи
+
+Значения `Email` и `Text` сохраняются между навигациями в пределах вкладки (sessionStorage). Взаимодействия с панелью в запись не попадают. Горячие клавиши продолжают работать.
+
 ## Конфиги окружений
 
 Окружения задаются через конфиг (например `dev`/`stage`) и включают:
@@ -194,6 +211,24 @@ JUnit XML:
     "headless": false
   }
 }
+```
+
+## Environment / Postgres
+
+Для подготовки к использованию Postgres (пока без миграции с SQLite) используются переменные окружения из `.env`.
+Файл `.env` локальный и **не коммитится** в репозиторий.
+По умолчанию используется SQLite. Чтобы включить Postgres, установите `DB_PROVIDER=postgres`.
+
+Пример (см. `.env.example`):
+
+```
+DB_PROVIDER=sqlite
+DATABASE_URL=
+PGHOST=
+PGPORT=5432
+PGDATABASE=
+PGUSER=
+PGPASSWORD=
 ```
 
 ## Diff/Git

@@ -1,8 +1,9 @@
-﻿import { Command } from "commander";
-import { initDb, getDb } from "./db/index.js";
+﻿import "dotenv/config";
+import { Command } from "commander";
+import { createRepository, getDbProvider, pingDatabase } from "./db/factory.js";
 import { recordMacro } from "./recorder/index.js";
 import { runMacro } from "./runner/index.js";
-import { MacroRepository, type Locator } from "./db/repository.js";
+import { type Locator } from "./db/repository.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -13,27 +14,58 @@ program
   .description("UI macro recorder/runner for browser tests")
   .version("0.1.0");
 
+async function getRepoOrExit(): Promise<Awaited<ReturnType<typeof createRepository>> | null> {
+  try {
+    return await createRepository();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`cannot connect to ${getDbProvider()}: ${message}`);
+    process.exitCode = 1;
+    return null;
+  }
+}
+
 program
   .command("db:init")
   .description("initialize SQLite schema")
   .action(async () => {
-    await initDb();
+    const repo = await getRepoOrExit();
+    if (!repo) return;
     console.log("DB initialized.");
+  });
+
+program
+  .command("db:ping")
+  .description("check database connectivity")
+  .action(async () => {
+    const provider = getDbProvider();
+    console.log(`DB provider: ${provider}`);
+    try {
+      await pingDatabase();
+      console.log("OK");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`cannot connect to ${provider}: ${message}`);
+      process.exitCode = 1;
+    }
   });
 
 program
   .command("record")
   .description("record a macro")
   .argument("[url]", "base URL")
+  .argument("[name]", "macro name")
   .option("--url <url>", "base URL")
   .option("--name <name>", "macro name")
-  .action(async (urlArg: string | undefined, options: { url?: string; name?: string }) => {
+  .action(async (urlArg: string | undefined, nameArg: string | undefined, options: { url?: string; name?: string }) => {
     const urlFromOption = typeof options.url === "string" ? options.url : undefined;
     const urlFromEnv = process.env.npm_config_url;
-    const url = urlFromOption ?? urlArg ?? urlFromEnv;
+    const urlFromDefault = process.env.AUTOTESTER_BASE_URL;
+    const url = urlFromOption ?? urlArg ?? urlFromDefault ?? urlFromEnv;
+    const nameFromOption = typeof options.name === "string" ? options.name : undefined;
+    const name = nameFromOption ?? nameArg ?? "Untitled macro";
 
-    await initDb();
-    await recordMacro({ url, name: options.name });
+    await recordMacro({ url, name });
   });
 
 program
@@ -61,7 +93,6 @@ program
       waitUntilArg: string | undefined,
       options
     ) => {
-    await initDb();
     const stopOnFail = String(options.stopOnFail).toLowerCase() !== "false";
     const headless =
       options.headed === true ? false : typeof options.headless === "string" ? String(options.headless).toLowerCase() !== "false" : undefined;
@@ -72,10 +103,11 @@ program
       waitUntilRaw === "commit" || waitUntilRaw === "domcontentloaded" || waitUntilRaw === "load" || waitUntilRaw === "networkidle"
         ? waitUntilRaw
         : undefined;
+    const baseUrlFromDefault = process.env.AUTOTESTER_BASE_URL;
     await runMacro({
       macroId: options.macroId ?? macroIdArg,
       env: options.env ?? envArg,
-      baseUrl: options.baseUrl ?? baseUrlArg,
+      baseUrl: options.baseUrl ?? baseUrlArg ?? baseUrlFromDefault,
       stopOnFail,
       headless,
       timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
@@ -87,9 +119,9 @@ program
   .command("list")
   .description("list macros")
   .action(async () => {
-    await initDb();
-    const repo = new MacroRepository(getDb());
-    const rows = repo.list();
+    const repo = await getRepoOrExit();
+    if (!repo) return;
+    const rows = await repo.list();
     if (rows.length === 0) {
       console.log("No macros found.");
       return;
@@ -126,9 +158,9 @@ program
       return;
     }
 
-    await initDb();
-    const repo = new MacroRepository(getDb());
-    const steps = repo.getAllSteps(macroId);
+    const repo = await getRepoOrExit();
+    if (!repo) return;
+    const steps = await repo.getAllSteps(macroId);
     if (steps.length === 0) {
       console.log("No steps found.");
       return;
@@ -164,17 +196,17 @@ program
     const stepId = options.stepId ? Number(options.stepId) : NaN;
 
     if (Number.isFinite(stepId)) {
-      await initDb();
-      const repo = new MacroRepository(getDb());
+      const repo = await getRepoOrExit();
+      if (!repo) return;
       if (Number.isFinite(macroId)) {
-        const ok = repo.isStepInMacro(stepId, macroId);
+        const ok = await repo.isStepInMacro(stepId, macroId);
         if (!ok) {
           console.error("step-id does not belong to the given macro-id");
           process.exitCode = 1;
           return;
         }
       }
-      const changes = repo.disableStepById(stepId);
+      const changes = await repo.disableStepById(stepId);
       if (changes === 0) {
         console.error("No steps updated.");
         process.exitCode = 1;
@@ -196,9 +228,9 @@ program
       return;
     }
 
-    await initDb();
-    const repo = new MacroRepository(getDb());
-    const changes = repo.disableStepByOrder(macroId, orderIndex);
+    const repo = await getRepoOrExit();
+    if (!repo) return;
+    const changes = await repo.disableStepByOrder(macroId, orderIndex);
     if (changes === 0) {
       console.error("No steps updated.");
       process.exitCode = 1;
@@ -228,9 +260,9 @@ program
       return;
     }
 
-    await initDb();
-    const repo = new MacroRepository(getDb());
-    const renamed = repo.renameMacro({ macroId, name });
+    const repo = await getRepoOrExit();
+    if (!repo) return;
+    const renamed = await repo.renameMacro({ macroId, name });
     if (!renamed) {
       console.error(`Macro ${macroId} not found.`);
       process.exitCode = 1;
@@ -256,9 +288,9 @@ program
       return;
     }
 
-    await initDb();
-    const repo = new MacroRepository(getDb());
-    const macroId = repo.createMacro({ name, baseUrl: url });
+    const repo = await getRepoOrExit();
+    if (!repo) return;
+    const macroId = await repo.createMacro({ name, baseUrl: url });
 
     const steps = [
       { orderIndex: 1, actionType: "hover", locators: [{ type: "data" as const, value: '[data-testid="profile-link"]' }] },
@@ -271,7 +303,7 @@ program
       { orderIndex: 8, actionType: "click", locators: [{ type: "data" as const, value: '[data-testid="continue-btn"]' }] },
     ];
 
-    repo.addSteps(macroId, steps);
+    await repo.addSteps(macroId, steps);
     console.log(`Seeded UI macro ${macroId} (${name})`);
   });
 
@@ -386,13 +418,13 @@ ${rows}
     }
 
     if (format === "junit") {
-      await initDb();
-      const repo = new MacroRepository(getDb());
-      const results = repo.getRunStepResults(runId);
+      const repo = await getRepoOrExit();
+      if (!repo) return;
+      const results = await repo.getRunStepResults(runId);
       const tests = report.summary?.total ?? results.length;
       const failures = report.summary?.failed ?? 0;
       const skipped = report.summary?.skipped ?? 0;
-      const runMeta = repo.getRunMeta(runId);
+      const runMeta = await repo.getRunMeta(runId);
       const envName = report.envName ?? runMeta?.env_name ?? "unknown";
       const browser = report.browser ?? runMeta?.browser ?? "unknown";
       const headlessValue =
