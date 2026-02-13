@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 dist/
 *.log
 .env
@@ -9,7 +9,6 @@ dist/
 autotester.sqlite
 
 
-node_modules/
 
 
 reports/
